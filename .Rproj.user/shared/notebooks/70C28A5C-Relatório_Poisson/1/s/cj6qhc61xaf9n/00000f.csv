@@ -1,0 +1,39 @@
+"0","# Carregando pacotes"
+"0",""
+"0","library(rstan)"
+"2","Carregando pacotes exigidos: StanHeaders
+"
+"2","Warning: package ‘StanHeaders’ was built under R version 4.3.1"
+"2","
+rstan version 2.26.22 (Stan version 2.26.1)
+
+"
+"2","For execution on a local, multicore CPU with excess RAM we recommend calling
+options(mc.cores = parallel::detectCores()).
+To avoid recompilation of unchanged Stan programs, we recommend calling
+rstan_options(auto_write = TRUE)
+For within-chain threading using `reduce_sum()` or `map_rect()` Stan functions,
+change `threads_per_chain` option:
+rstan_options(threads_per_chain = 1)
+
+"
+"2","Do not specify '-march=native' in 'LOCAL_CPPFLAGS' or a Makevars file
+"
+"0","library(coda)"
+"2","
+Attaching package: ‘coda’
+
+"
+"2","The following object is masked from ‘package:rstan’:
+
+    traceplot
+
+"
+"0","library(kableExtra)"
+"2","Registered S3 methods overwritten by 'htmltools':
+  method               from         
+  print.html           tools:rstudio
+  print.shiny.tag      tools:rstudio
+  print.shiny.tag.list tools:rstudio
+"
+"0","library(plotrix)"

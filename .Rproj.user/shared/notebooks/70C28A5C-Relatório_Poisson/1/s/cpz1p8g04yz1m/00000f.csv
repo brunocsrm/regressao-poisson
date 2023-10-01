@@ -1,0 +1,5 @@
+"0","# Rodando o modelo"
+"0",""
+"0","out <- stan(file = ""./Stan/Regpois.stan"", data = data,"
+"0","               iter = iter, warmup = warmup, chains = chains,"
+"0","               pars = pars, init = init, verbose = FALSE)"

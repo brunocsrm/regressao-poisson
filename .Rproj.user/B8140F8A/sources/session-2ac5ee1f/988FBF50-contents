@@ -1,0 +1,467 @@
+---
+title: "Relatório"
+author: "Bruno Carvalho Silva Ribeiro"
+header-includes:
+  - \usepackage{float}
+  - \floatplacement{figure}{H}  #make every figure with caption = h, this was the fix
+  - \floatplacement{table}{H}
+execute: 
+  warning: false
+  echo: false
+  message: false
+format: 
+  pdf:
+    number-sections: true
+    number-depth: 3
+    fig-pos: 'H'
+    fig-height: 5
+    
+editor: visual
+---
+
+```{r echo=FALSE, message = FALSE}
+# Carregando pacotes
+library(rstan)
+library(coda)
+library(purrr)
+library(kableExtra)
+library(plotrix)
+```
+
+```{r}
+# Configurações Iniciais
+rm(list=ls(all=TRUE))
+rstan_options(auto_write=TRUE)
+options(mc.cores = parallel::detectCores())
+set.seed(1)
+```
+
+```{r}
+# Declaração de funções
+
+
+faz_tab_bayes <- function(samp, real, q){
+  
+  # recebe um objeto do tipo samp 
+  # real é um vetor com os valores reais dos parametros
+  # q é o tamanho do vetor de betas
+  aux = cbind(samp$beta)
+  me = apply(aux, 2, mean)   # média
+  md = apply(aux, 2, median) # mediana
+  sd = apply(aux, 2, sd)     # desvio padrão
+  aux = as.mcmc(aux)
+  hpd = HPDinterval(aux)
+  tab = cbind(unlist(real), me, md, sd, hpd[,'lower'], hpd[,'upper'], hpd[,'upper'] - hpd[,'lower'])
+  rownames(tab) = c(paste0('beta', 0:(q-1)))
+  colnames(tab) = c('true', 'mean', 'median', 's.d.', 'HPD_inf', 'HPD_sup', 'Amplitude')
+  res <- round(tab, 4)              # mostrar saída com 4 casas decimais 
+  return(res)
+  
+}
+
+
+faz_tab_classica <- function(mod, q){
+  # mod é um glm
+  # q é o tamanho do vetor de betas
+  tab_classica <- summary(mod)$coefficients
+  rownames(tab_classica) <- c(paste0('beta', 0:(q-1)))
+  res <- round(tab_classica, 4)
+  return(res)
+}
+
+
+gera_bayes <- function(n, prob_X2, logit = TRUE, seed_number){
+  # path_stanfile deve ser do tipo "./Stan/Regprobit.stan"
+  
+  set.seed(seed_number)
+
+  if(logit == TRUE){
+    
+    # n <- 200
+    beta <- c(1.5, 0.5, -0.5, 1.0, -1.0)
+    q <- length(beta)
+    real <- list(beta)
+    names(real) <- c('beta')
+    
+    x <- array(1, c(n, q))
+    
+    x[,2] <- rbinom(n, 1, prob_X2)
+    
+    
+    for(i in 3:q){x[,i] <- runif(n, -1, 1)}
+    
+    eta <- x %*% as.matrix(beta) |> as.vector()
+    
+    theta <- exp(eta) / (1 + exp(eta))
+    
+    y <- numeric(n)
+    for(i in 1:n){y[i] <- rbinom(1, 1, theta[i])}
+    
+    m_beta <- rep(0, q)
+    s_beta <- 10*diag(q)
+    
+    data <- list(
+      n = n, 
+      q = q, 
+      y = y, 
+      x = x,
+      m_beta = m_beta,
+      s_beta = s_beta
+    )
+    
+    pars <- c("beta")
+    
+    # Lista de sementes de inicialização (2 cadeias):
+    init = list()
+    init[[1]] <- list(beta=rep(0,q))
+    init[[2]] <- list(beta=runif(q,-1,1))
+    
+    iter = 2000
+    warmup = 1000
+    chains = 2
+    
+    out <- stan(file = "./Stan/Reglogit.stan", data = data,
+                   iter = iter, warmup = warmup, chains = chains,
+                   pars = pars, init = init, verbose = FALSE)
+    
+    res <- list(
+      output = out,
+      real = real, 
+      x = x, 
+      y = y, 
+      eta = eta, 
+      theta = theta
+    )
+    
+  }else{
+    
+    # n <- 200
+    beta <- c(1.5, 0.5, -0.5, 1.0, -1.0)
+    q <- length(beta)
+    real <- list(beta)
+    names(real) <- c('beta')
+    
+    x <- array(1, c(n, q))
+    
+    x[,2] <- rbinom(n, 1, prob_X2)
+    
+    
+    for(i in 3:q){x[,i] <- runif(n, -1, 1)}
+    
+    eta <- x %*% as.matrix(beta) |> as.vector()
+    
+    theta <- pnorm(eta)
+    
+    y <- numeric(n)
+    for(i in 1:n){y[i] <- rbinom(1, 1, theta[i])}
+    
+    m_beta <- rep(0, q)
+    s_beta <- 10*diag(q)
+    
+    data <- list(
+      n = n, 
+      q = q, 
+      y = y, 
+      x = x,
+      m_beta = m_beta,
+      s_beta = s_beta
+    )
+    
+    pars <- c("beta")
+    
+    # Lista de sementes de inicialização (2 cadeias):
+    init = list()
+    init[[1]] <- list(beta=rep(0,q))
+    init[[2]] <- list(beta=runif(q,-1,1))
+    
+    iter = 2000
+    warmup = 1000
+    chains = 2
+    
+    out <- stan(file = "./Stan/Regprobit.stan", data = data,
+                   iter = iter, warmup = warmup, chains = chains,
+                   pars = pars, init = init, verbose = FALSE)
+    
+    res <- list(
+      output = out,
+      real = real, 
+      x = x, 
+      y = y, 
+      eta = eta, 
+      theta = theta
+    )
+    
+  }
+  
+  return(res)
+  
+}
+
+
+cria_traceplot <- function(samp, real, index_samp, index_beta){
+  # samp é uma lista em que cada elemento é uma amostra diferente
+  # real é o vetor com os verdadeiros valores dos parâmetros
+  # index acessa qual elemento de cada um desses parâmetros você quer acessar
+
+  { plot( samp[[index_samp]]$beta[,index_beta], type = 'l', cex.lab = 1.5, cex.axis = 1.5,
+        xlab = 'iterações', ylab = 'beta0',
+        main = paste0("Traceplot de beta", (index_beta-1)), col = 'blue') 
+  abline( h = real$beta[index_beta], lwd = 5, col = 'red') }
+}
+
+
+calcula_ic <- function(mod, betas, conf_level = 0.95){
+  # Usado apenas para o método frequentista 
+  
+  tab_info <- summary(mod)$coefficients
+  estimatives <- tab_info[,1]
+  standard_error <- tab_info[,2]
+  z <- abs(qnorm((1-conf_level)/2))
+  li <- estimatives - z*standard_error  
+  ls <- estimatives + z*standard_error
+  res <- list(li = li, ls = ls)
+  
+  return(res)
+}
+
+
+```
+
+# Requisitos da tarefa
+
+## Tarefa 1
+
+-   n = 200 vs n = 1000 Bayesiana
+-   Tabelas n = 200 e n = 1000
+-   Gráfico plotrix
+
+## Tarefa 2
+
+-   n = 200
+-   Bayesiano vs frequentista
+-   Tabelas bayes x Frequentista
+
+## Tarefa 3
+
+-   Desbalanceamento de x\[,2\] (covariável $x_1$) Bayesiana
+-   n = 200 prob = 0.5 e n = 200 prob = 0.1
+
+## Tarefa 4
+
+-   Usar a mesma matriz X e os mesmos valores reais
+-   n = 200
+-   link logit vs link probit
+-   tabelas logit vs probit
+-   plotrix logit vs probit
+
+```{r cache=TRUE}
+# Gerando dados
+n <- list(200, 1000, 200, 200) # tarefa1, tarefa1, tarefa2, tarefa 3, tarefa 4
+prob_X2 <- list(0.5, 0.5, 0.1, 0.5)
+logit <- list(TRUE, TRUE, TRUE, FALSE)
+
+output <- pmap(list(n, prob_X2, logit), gera_bayes, 1)
+
+samp <- vector(mode = "list", length = length(output))
+for(i in seq_along(samp)){samp[[i]] <- extract(output[[i]]$output)}
+```
+
+A tabela abaixo mostra a configuração de como foram gerados os dados para os cenários que usaremos nas tarefas.
+
+```{r}
+#| label: tbl-tab_configs
+#| tbl-cap: "Tabelas com resumo das configurações de cada cenário simulado"
+
+tab_configs <- data.frame(
+  index = 1:length(output),
+  n = c(200, 1000, 200, 200),
+  prob_sucesso = c(0.5, 0.5, 0.1, 0.5),
+  eh_logit = c(rep("sim",3), "não")
+)
+colnames(tab_configs) <- c("Índice na lista", "Tamanho da amostra", "Probabilidade de Sucesso", "É link logit?")
+
+kbl(tab_configs, booktabs = T)%>% 
+      kable_styling(latex_options = c("striped", "scale_down",  "hold_position"))
+```
+
+Vale ressaltar que a probabilidade de sucesso dessa tabela se refere a covariável $x_1$ ou, no R, a segunda coluna da matriz de covariáveis (x\[,2\]), uma vez que ela foi gerada de uma distribuição bernoulli.
+
+```{r}
+# Salvando tabelas
+tabelas_bayes <- vector(mode = "list", length = length(output))
+for(i in seq_along(output)){
+  tabelas_bayes[[i]] <- faz_tab_bayes(samp[[i]], output[[i]]$real, length(output[[i]]$real$beta))
+}
+
+```
+
+# Panorama geral das estimações bayesianas
+
+```{r}
+#| label: tbl-panorama_bayes
+#| tbl-cap: "Tabelas com as estimações dos 4 cenários de estudo"
+#| tbl-subcap: 
+#|   - "(a) Tamanho de amostra 200"
+#|   - "(b) Tamanho de amostra 1000"
+#|   - "(c) Tamanho de amostra 200 prob = 0.1"
+#|   - "(d) Tamanho de amostra 200 probit"
+#| layout-ncol: 2
+#| layout-nrow: 2
+
+library(knitr)
+
+kbl(tabelas_bayes[[1]], booktabs = T)%>% 
+      kable_styling(latex_options = c("striped", "scale_down",  "hold_position"))
+
+kbl(tabelas_bayes[[2]], booktabs = T)%>% 
+      kable_styling(latex_options = c("striped", "scale_down",  "hold_position"))
+
+kbl(tabelas_bayes[[3]], booktabs = T)%>% 
+      kable_styling(latex_options = c("striped", "scale_down",  "hold_position"))
+
+kbl(tabelas_bayes[[4]], booktabs = T)%>% 
+      kable_styling(latex_options = c("striped", "scale_down",  "hold_position"))
+
+```
+
+# Comparação: Bayesiana vs frequentista
+
+Na comparação que se segue, faremos usando n = 200. O intuito é verificar o quão próxima a estimação pelo método bayesiano se encontra do clássico frequentista
+
+```{r}
+#| label: tbl-bayes_classic
+#| tbl-cap: "Tabelas com as estimações dos 4 cenários de estudo"
+#| tbl-subcap: 
+#|   - "(a) Método Bayesiano"
+#|   - "(b) Método Bayesiano"
+#| layout-ncol: 1
+#| layout-nrow: 2
+
+x <- output[[1]]$x
+
+y <- output[[1]]$y
+
+beta <- output[[1]]$real$beta
+
+q <- length(output[[1]]$real$beta)
+
+df <- data.frame(x, y)
+
+mod <- glm(y~. -X1, family = binomial(link = "logit"), data = df)
+
+tab_classica <- list(faz_tab_classica(mod, q))
+
+ic <- calcula_ic(mod, beta)
+
+tab_classica[[1]] <- cbind(tab_classica[[1]], ic$li, ic$ls, abs(ic$ls - ic$li))
+
+colnames(tab_classica[[1]]) <- c("Estimate", "Std. Error", "z value", 
+                                 "Pr(>|z|)", "IC_inf", "IC_sup", "Amplitude")
+
+kbl(tabelas_bayes[[1]], booktabs = T)%>% 
+      kable_styling(latex_options = c("striped", "scale_down",  "hold_position"))
+
+kbl(tab_classica[[1]], booktabs = T)%>% 
+      kable_styling(latex_options = c("striped", "scale_down",  "hold_position"))
+
+
+```
+
+# Gráficos
+
+```{r}
+#| label: fig-plot1
+#| fig-cap: "Estudo do efeito do tamanho amostral na qualidade da estimação bayesiana"
+#| fig-subcap: 
+#|   - "Bayes n = 200"
+#|   - "Bayes n = 1000"
+#| layout-ncol: 2
+{plotCI(x = 0:4, y = tabelas_bayes[[1]][,2], ui = tabelas_bayes[[1]][,6], 
+        li = tabelas_bayes[[1]][,5], xlab = "beta", ylab = "Estimativa", 
+        lwd = 2, ylim = c(-2, 2.2))
+points(x = 0:4, y = beta, col = "red", pch = 4, lwd = 2)}
+
+{plotCI(x = 0:4, y = tabelas_bayes[[2]][,2], ui = tabelas_bayes[[2]][,6], 
+        li = tabelas_bayes[[2]][,5], xlab = "beta", ylab = "Estimativa", 
+        lwd = 2, ylim = c(-2, 2.2))
+points(x = 0:4, y = beta, col = "red", pch = 4, lwd = 2)}
+```
+
+```{r}
+#| label: fig-plot2
+#| fig-cap: "Comparação baysino vs frequentista"
+#| fig-subcap: 
+#|   - "Método Bayesiano"
+#|   - "Método Frequentista"
+#| layout-ncol: 2
+
+{plotCI(x = 0:4, y = tabelas_bayes[[1]][,2], ui = tabelas_bayes[[1]][,6], 
+        li = tabelas_bayes[[1]][,5], xlab = "beta", ylab = "Estimativa", 
+        lwd = 2, ylim = c(-2, 2.2))
+points(x = 0:4, y = beta, col = "red", pch = 4, lwd = 2)}
+
+{plotCI(x = 0:4, y = tab_classica[[1]][,1], ui = ic$ls, li = ic$li, 
+        xlab = "beta", ylab = "Estimativa", lwd = 2, ylim = c(-2, 2.2))
+points(x = 0:4, y = beta, col = "red", pch = 4, lwd = 2)}
+
+
+
+```
+
+```{r}
+#| label: fig-plot3
+#| fig-cap: "Estudo do desbalanceamento da covariável x1 pelo método bayesiano"
+#| fig-subcap: 
+#|   - "n = 200 e Pr(X2=x) = 0.5"
+#|   - "n = 200 e Pr(X2=x) = 0.1"
+#| layout-ncol: 2
+
+{plotCI(x = 0:4, y = tabelas_bayes[[1]][,2], ui = tabelas_bayes[[1]][,6], 
+        li = tabelas_bayes[[1]][,5], xlab = "beta", ylab = "Estimativa", 
+        lwd = 2, ylim = c(-2, 2.2))
+points(x = 0:4, y = beta, col = "red", pch = 4, lwd = 2)}
+
+{plotCI(x = 0:4, y = tabelas_bayes[[3]][,2], ui = tabelas_bayes[[3]][,6], 
+        li = tabelas_bayes[[3]][,5], xlab = "beta", ylab = "Estimativa", 
+        lwd = 2, ylim = c(-2, 2.2))
+points(x = 0:4, y = beta, col = "red", pch = 4, lwd = 2)}
+```
+
+```{r}
+#| label: fig-plot4
+#| fig-cap: "Comparação logit vs probit pelo método bayesiano"
+#| fig-subcap: 
+#|   - "n = 200 e logit"
+#|   - "n = 200 e probit"
+#| layout-ncol: 2
+
+{plotCI(x = 0:4, y = tabelas_bayes[[1]][,2], ui = tabelas_bayes[[1]][,6], 
+        li = tabelas_bayes[[1]][,5], xlab = "beta", ylab = "Estimativa", 
+        lwd = 2, ylim = c(-2, 2.2))
+points(x = 0:4, y = beta, col = "red", pch = 4, lwd = 2)}
+
+{plotCI(x = 0:4, y = tabelas_bayes[[4]][,2], ui = tabelas_bayes[[4]][,6], 
+        li = tabelas_bayes[[4]][,5], xlab = "beta", ylab = "Estimativa", 
+        lwd = 2, ylim = c(-2, 2.2))
+points(x = 0:4, y = beta, col = "red", pch = 4, lwd = 2)}
+```
+
+# Observações
+
+Eu achei muito estranho na @tbl-panorama_bayes o fato de que para $\beta_0$ q quando usamos n = 200 a estimação foi de 1.5381 enquanto que, ao aumentarmos o tamanho da amostra para n = 1000, a estimação, apenas para esse parâmetro, piorou passando a valrer 1.2586. Inicialmente, pensei que poderia ser um problema no código stan porém, conforme é possível ver nas observações 1 e 2 abaixo, quando eu coloco um tamanho amostral muito grande, de n = 10000, as cadeias seguem a lei de, ao aumentar o tamanho da amostra, a qualidade da estimação melhora. O que poderia estar causando esse erro?
+
+-   Observação 1
+
+```{r cache = TRUE, eval=FALSE}
+output_teste <- gera_bayes(10000, 0.5, logit = TRUE, seed_number = 1)
+faz_tab_bayes(extract(output_teste$output), output_teste$real, length(output_teste$real$beta))
+```
+
+-   Observação 2
+
+```{r cache=TRUE, eval=FALSE}
+output_teste2 <- gera_bayes(10000, 0.5, logit = FALSE, seed_number = 1)
+faz_tab_bayes(extract(output_teste2$output), output_teste2$real, length(output_teste2$real$beta))
+```
+
+A função pmap funciona da seguinte maneira: ela combina os parâmetros elemento a elemento. Desse modo, na primeira posição, ela irá pegar o elemento na posição 1 das listas n, prob_X2, logit e efetuar a computação. Desse modo, tem-se gera_bayes(n = 200, prob_X2 = 0.5, logit = TRUE), gera_bayes(n = 1000, prob_X2 = 0.5, logit = TRUE) e assim sucessivamente.
